@@ -1,0 +1,21 @@
+{
+  "name": "drone",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "main": "node dist/main.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "i2c-bus": "^5.2.1",
+    "jspack": "0.0.4",
+    "mavlink_ardupilotmega_v1.0": "0.0.2",
+    "rpio": "^2.4.2",
+    "serialport": "^9.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "^14.14.35"
+  }
+}
