@@ -2,23 +2,31 @@
 
 //import { Pince } from './lib/Pince'
 
-//const delay = ms => new Promise(res => setTimeout(res, ms));
+const waitfor = ms => new Promise(res => setTimeout(res, ms));
 
 const {Pince} = require("./lib/Pince")
+const { Pixy2 } = require("./lib/Pixy2")
 
 const pince = new Pince(0x40)
+const camera = new Pixy2()
 
 import MAVLink from 'mavlink_ardupilotmega_v1.0';
+import { resolve } from 'node:path';
 
 // Instantiate the parser
 // logger: pass a Winston logger or null if not used
 // 1: source system id
 // 50: source component id
 
-let mavlinkParser = new MAVLink();
+const mavlinkParser = new MAVLink();
+const SerialPort = require("serialport")
 
-const port = new (require("serialport"))('/dev/ttyACM0', {
+const port = new SerialPort('/dev/ttyACM0', {
 	baudRate: 115200
+})
+
+const holybro = new SerialPort('/dev/ttyUSB0', {
+	baudRate: 57600
 })
 
 //port.on('readable', function () {
@@ -27,10 +35,10 @@ const port = new (require("serialport"))('/dev/ttyACM0', {
 //})
 
 
+
 port.on('data', function (data) {
 	mavlinkParser.parseBuffer(data);
 })
-
 
 //https://mavlink.io/en/messages/ardupilotmega.html
 
@@ -58,26 +66,17 @@ let nomsg = {
 }
 
 mavlinkParser.on('message', function (message) {
-
 	if (!nomsg[message.name]) {
 		//console.log(message)
 	}
-
 });
-
 
 mavlinkParser.on('GLOBAL_POSITION_INT', function (message) { // GLOBAL_POSITION_INT gps + estimation , GPS_RAW_INT GPS uniquement
-
-
-	//console.log(message.name, "GPS : ", "Latitude :", message.lat / 10000000, "Longitude :", message.lon / 10000000)
-
+	console.log(message.name, "GPS : ", "Latitude :", message.lat / 10000000, "Longitude :", message.lon / 10000000)
 });
 
-
 mavlinkParser.on('VFR_HUD', function (message) {
-
 	//console.log(message.name, "Airspeed : ", message.airspeed, "m/s", "Groundspeed : ", message.groundspeed, "m/s", "Altitude : ", message.alt, "m")
-
 });
 
 mavlinkParser.on('STATUSTEXT', function (message) {
@@ -102,7 +101,7 @@ const heartbeat = new MAVLink.messages.heartbeat(
 mavlinkParser.on('HEARTBEAT', function (message) {
 
 	//console.log(message.name, "[", message.severity, "]", message.text)
-	port.write(heartbeat.pack(mavlinkParser))
+	//port.write(heartbeat.pack(mavlinkParser))
 	//console.log( message )
 
 });
@@ -138,20 +137,156 @@ async function CommandLong(target_system, target_component, command, confirmatio
 	})
 }
 
+function CreateMisstionItem(command: number, seq: number, x: number, y: number, z: number) {
+	return new MAVLink.messages.mission_item(1, 0, seq, 0, command, 0, 0, 0, 0, 0, 0, x, y, z)
+}
+
+let mission = [
+	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0),
+	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 1.1, 1.1, 1.1, 50),
+	CreateMisstionItem(MAVLink.MAV_CMD_NAV_LAND, 2.1, 1.1, 1.1, 100),
+	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 3.1, 1.1, 1.1, 150)
+]
+
+function IsJsonString(str) {
+	try {
+		JSON.parse(str);
+	} catch (e) {
+		return false;
+	}
+	return true;
+}
+
+let jsonbuffer = ""
+
+holybro.on('data', function (read) {
+
+	let data = jsonbuffer + read.toString()
+	console.log(data)
+
+	if (IsJsonString(data)) {
+		let obj = JSON.parse(data)
+		jsonbuffer = ""
+		obj.path = JSON.parse(obj.path)
+		CreateMission(obj)
+	} else {
+		jsonbuffer = data
+	}
+})
+
+async function CreateMission(mission: any) {
+	return new Promise(resolve => {
+		const numItems = mission.path.length
+
+		console.log("numItems", numItems)
+
+		const missioncount = new MAVLink.messages.mission_count(1, 0, numItems);
+
+		port.write(missioncount.pack(mavlinkParser))
+
+		mavlinkParser.on('MISSION_REQUEST', function (message) {
+
+			let p = mission.path[message.seq]
+			console.log(message.seq, mission.path[message.seq])
+			if (p) {
+				port.write(CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, message.seq, p.lat, p.lng, 30).pack(mavlinkParser))
+			}
+
+			if (message.seq == mission.path.length - 1) {
+				console.log("salut")
+				resolve(true)
+			}
+		})
+	})
+}
+
+async function DetectObject(callback: (blocks: any) => void) {
+
+	const { spawn } = require('child_process');
+
+	const get_blocks = spawn('/home/pi/testPixy/pixy2/build/get_blocks_cpp_demo/get_blocks_cpp_demo');
+
+	const rl = require('readline').createInterface({
+		input: get_blocks.stdout
+	});
+
+	let regex = /^.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+$/i;
+
+	rl.on('line', function (line) {
+		if (regex.test(line)) {
+			let splt = line.split(": ")
+			let x = Number(splt[3].split(" ")[0])
+			let y = Number(splt[4].split(" ")[0])
+			let width = Number(splt[5].split(" ")[0])
+			let height = Number(splt[6].split(" ")[0])
+			let index = Number(splt[7].split(" ")[0])
+			let age = Number(splt[8].split(" ")[0])
+
+			callback({
+				x: x,
+				y: y,
+				width: width,
+				height: height,
+				index: index,
+				age: age
+			})
+		}
+	});
+
+	get_blocks.on('close', (code) => {
+		if (code !== 0) {
+			console.log(`ps process exited with code ${code}`);
+		}
+	})
+
+
+}
+
+let timeout = null
+
+async function closeIn3Sec() {
+
+	clearTimeout(timeout);
+
+	timeout = setTimeout(async () => {
+		if (pince.IsAvailable()) {
+			console.log("Ouvrir")
+			await pince.Ouvrir();
+		} else {
+			closeIn3Sec()
+		}
+
+	}, 3000);
+
+}
+
 async function main() {
+
+	camera.Init()
+	camera.Read(function (blocks) {
+		console.log(blocks)
+	})
+
+	//while (true) {
+	//	await pince.Ouvrir();
+	//	await waitfor(3000);
+	//	await pince.Fermer();
+	//	await waitfor(3000);
+//
+	//}
 
 	//await pince.Ouvrir();
 	//console.log("pince.Fermer")
 	//await pince.Fermer();
 	//console.log("pince fermée")
 
-	let msg
+	//let msg
 
-	msg = await CommandLong(0, 0, MAVLink.MAV_CMD_COMPONENT_ARM_DISARM , 1,1 )
-	console.log( "msg" , msg)
-
-	msg = await CommandLong(0, 0, MAVLink.MAV_CMD_DO_CHANGE_SPEED , 1,100,100,0 )
-	console.log( "msg" , msg)
+	//msg = await CommandLong(0, 0, MAVLink.MAV_CMD_COMPONENT_ARM_DISARM , 1,1 )
+	//console.log( "msg" , msg)
+	//
+	//msg = await CommandLong(0, 0, MAVLink.MAV_CMD_DO_CHANGE_SPEED , 1,100,100,0 )
+	//console.log( "msg" , msg)
 
 	//let command_long = new MAVLink.messages.command_long(1, 1, MAVLink.MAV_CMD_COMPONENT_ARM_DISARM , 1,0);
 	//port.write(command_long.pack(mavlinkParser))
