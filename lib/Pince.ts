@@ -29,20 +29,24 @@ class Pince {
 
     public async Fermer() {
     	this.available = false
+		await delay(100)
     	for (var i = 1; i < 600; i++) {
-			await delay( 1 )
+			await delay(5)
 			this.setPWM(0, 0, i);
 		}
+		await delay(100)
 		this.setPWM(0, 0, 0);
-    	this.available = true
+		await delay(1000)
+		this.available = true
     	this.status = false
         return
     }
     public async Ouvrir() {
     	this.available = false
     	this.setPWM(0, 0, 1);
-    	await delay( 1000 );
+		await delay(1000);
     	this.setPWM(0, 0, 0);
+		await delay(1000)
     	this.available = true
     	this.status = true
         return
