@@ -1,8 +1,4 @@
 
-const rpio = require('rpio');
-
-
-
 
 
 class Pixy2 {
