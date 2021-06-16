@@ -2,38 +2,53 @@
 
 //import { Pince } from './lib/Pince'
 
-const waitfor = ms => new Promise(res => setTimeout(res, ms));
+
 
 const {Pince} = require("./lib/Pince")
 const { Pixy2 } = require("./lib/Pixy2")
+const { Lidar } = require("./lib/Lidar")
+
 
 const pince = new Pince(0x40)
 const camera = new Pixy2()
+const lidar = new Lidar()
+
+
+
+let configuration: { batterie: number, vitesse: number, hauteur: number, vent: number, type: string }
 
 import MAVLink from 'mavlink_ardupilotmega_v1.0';
 import { resolve } from 'node:path';
 
-// Instantiate the parser
-// logger: pass a Winston logger or null if not used
-// 1: source system id
-// 50: source component id
-
 const mavlinkParser = new MAVLink();
 const SerialPort = require("serialport")
+import net from 'net';
 
 const port = new SerialPort('/dev/ttyACM0', {
 	baudRate: 115200
 })
 
-const holybro = new SerialPort('/dev/ttyUSB0', {
-	baudRate: 57600
-})
+//const holybro = new SerialPort('/dev/ttyUSB0', {
+//	baudRate: 57600
+//})
+
+//function onClientConnection(sock) {
+//
+//	port.on('data', function (data) {
+//		sock.write(data);
+//	})
+//
+//	sock.on('data', function (data) {
+//		port.write(data)
+//	});
+//};
+
+
 
 //port.on('readable', function () {
 //	console.log('Data:', port.read())
 //	mavlinkParser.parseBuffer(port.read());
 //})
-
 
 
 port.on('data', function (data) {
@@ -44,8 +59,8 @@ port.on('data', function (data) {
 
 let nomsg = {
 	"HEARTBEAT": true,
-	"GLOBAL_POSITION_INT": true, //gps + estimation
-	"GPS_RAW_INT": true, // GPS uniquement sans estimation
+	"GLOBAL_POSITION_INT": false, //gps + estimation
+	"GPS_RAW_INT": false, // GPS uniquement sans estimation
 	"SYS_STATUS": true, // battery etc
 	"HWSTATUS": true, //status
 	"RAW_IMU": true, //  9 DOF sensor
@@ -63,13 +78,15 @@ let nomsg = {
 	"STATUSTEXT": true, // status + severité
 	"PARAM_VALUE": true, // pas compris ? .. Emit the value of a onboard parameter. he parameter microservice is documented at https://mavlink.io/en/services/parameter.html
 	"LOCAL_POSITION_NED" : true,
+	"COMMAND_ACK": true
 }
 
 mavlinkParser.on('message', function (message) {
 	if (!nomsg[message.name]) {
-		//console.log(message)
+		console.log(message)
 	}
 });
+
 
 mavlinkParser.on('GLOBAL_POSITION_INT', function (message) { // GLOBAL_POSITION_INT gps + estimation , GPS_RAW_INT GPS uniquement
 	console.log(message.name, "GPS : ", "Latitude :", message.lat / 10000000, "Longitude :", message.lon / 10000000)
@@ -85,6 +102,12 @@ mavlinkParser.on('STATUSTEXT', function (message) {
 
 });
 
+mavlinkParser.on('SYS_STATUS', function (message) {
+
+	console.log(message)
+
+});
+
 //mavlinkParser.on('SYS_STATUS', function (message) {
 //	console.log(message)
 //});
@@ -96,13 +119,10 @@ const heartbeat = new MAVLink.messages.heartbeat(
 	0, 
 	MAVLink.MAV_STATE_ACTIVE,  
 	3
-);
+).pack(mavlinkParser);
 
 mavlinkParser.on('HEARTBEAT', function (message) {
-
-	//console.log(message.name, "[", message.severity, "]", message.text)
-	//port.write(heartbeat.pack(mavlinkParser))
-	//console.log( message )
+	port.write(heartbeat)
 
 });
 
@@ -141,40 +161,45 @@ function CreateMisstionItem(command: number, seq: number, x: number, y: number, 
 	return new MAVLink.messages.mission_item(1, 0, seq, 0, command, 0, 0, 0, 0, 0, 0, x, y, z)
 }
 
-let mission = [
-	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 0, 0, 0, 0),
-	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 1.1, 1.1, 1.1, 50),
-	CreateMisstionItem(MAVLink.MAV_CMD_NAV_LAND, 2.1, 1.1, 1.1, 100),
-	CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, 3.1, 1.1, 1.1, 150)
-]
+//function IsJsonString(str: string) {
+//	try {
+//		JSON.parse(str);
+//	} catch (e) {
+//		return false;
+//	}
+//	return true;
+//}
 
-function IsJsonString(str) {
-	try {
-		JSON.parse(str);
-	} catch (e) {
-		return false;
-	}
-	return true;
+//let jsonbuffer = ""
+
+//holybro.on('data', function (read) {
+//
+//	let data = jsonbuffer + read.toString()
+//	console.log(data)
+//
+//	if (IsJsonString(data)) {
+//		let obj = JSON.parse(data)
+//		jsonbuffer = ""
+//		obj.path = JSON.parse(obj.path)
+//		CreateMission(obj)
+//	} else {
+//		jsonbuffer = data
+//	}
+//})
+
+async function MotorTest() {
+	await CommandLong(1, 1, MAVLink.MAV_CMD_DO_MOTOR_TEST, 0, 2, 0, 5, 2, 0, 0, 0)
 }
 
-let jsonbuffer = ""
+async function Mission_Start() {
+	await CommandLong(1, 1, MAVLink.MAV_CMD_MISSION_START, 0, 0, 0, 1, 0, 0, 0, 0)
+}
 
-holybro.on('data', function (read) {
+async function Dorne_Arm() {
+	await CommandLong(0, 0, MAVLink.MAV_CMD_COMPONENT_ARM_DISARM, 1, 1)
+}
 
-	let data = jsonbuffer + read.toString()
-	console.log(data)
-
-	if (IsJsonString(data)) {
-		let obj = JSON.parse(data)
-		jsonbuffer = ""
-		obj.path = JSON.parse(obj.path)
-		CreateMission(obj)
-	} else {
-		jsonbuffer = data
-	}
-})
-
-async function CreateMission(mission: any) {
+async function CreateMission(mission: any): Promise<boolean> {
 	return new Promise(resolve => {
 		const numItems = mission.path.length
 
@@ -184,62 +209,25 @@ async function CreateMission(mission: any) {
 
 		port.write(missioncount.pack(mavlinkParser))
 
-		mavlinkParser.on('MISSION_REQUEST', function (message) {
+		mavlinkParser.on('MISSION_REQUEST', async function (message) {
 
 			let p = mission.path[message.seq]
 			console.log(message.seq, mission.path[message.seq])
 			if (p) {
-				port.write(CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, message.seq, p.lat, p.lng, 30).pack(mavlinkParser))
+				port.write(CreateMisstionItem(MAVLink.MAV_CMD_NAV_WAYPOINT, message.seq, p.lat, p.lng, configuration.hauteur).pack(mavlinkParser))
 			}
 
 			if (message.seq == mission.path.length - 1) {
-				console.log("salut")
+				await Dorne_Arm()
+				await Mission_Start()
+				await MotorTest()
+
 				resolve(true)
+
+
 			}
 		})
 	})
-}
-
-async function DetectObject(callback: (blocks: any) => void) {
-
-	const { spawn } = require('child_process');
-
-	const get_blocks = spawn('/home/pi/testPixy/pixy2/build/get_blocks_cpp_demo/get_blocks_cpp_demo');
-
-	const rl = require('readline').createInterface({
-		input: get_blocks.stdout
-	});
-
-	let regex = /^.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+.*[0-9]+$/i;
-
-	rl.on('line', function (line) {
-		if (regex.test(line)) {
-			let splt = line.split(": ")
-			let x = Number(splt[3].split(" ")[0])
-			let y = Number(splt[4].split(" ")[0])
-			let width = Number(splt[5].split(" ")[0])
-			let height = Number(splt[6].split(" ")[0])
-			let index = Number(splt[7].split(" ")[0])
-			let age = Number(splt[8].split(" ")[0])
-
-			callback({
-				x: x,
-				y: y,
-				width: width,
-				height: height,
-				index: index,
-				age: age
-			})
-		}
-	});
-
-	get_blocks.on('close', (code) => {
-		if (code !== 0) {
-			console.log(`ps process exited with code ${code}`);
-		}
-	})
-
-
 }
 
 let timeout = null
@@ -260,25 +248,64 @@ async function closeIn3Sec() {
 
 }
 
+
+let socket: any
+
+async function CreateServer() {
+	new Promise((resolve, reject) => {
+
+		function onClientConnection(_socket) {
+
+			socket = _socket
+
+			socket.on('error', function (exc) {
+				console.log(" exception: " + exc);
+			});
+
+			socket.on('data', function (d) {
+				let data = JSON.parse(d.toString())
+				console.log(data.type)
+
+				if (data.type == "config") {
+					configuration = data
+				}
+
+				if (data.type == "mission") {
+					CreateMission(data)
+				}
+
+				console.log(data)
+			});
+		};
+
+		const server = net.createServer(onClientConnection);
+		server.listen(8080, '192.168.1.61', function () {
+			resolve(true)
+		});
+
+	})
+}
+
 async function main() {
 
+	await CreateServer()
+
+	await Dorne_Arm()
+
+	await pince.Ouvrir()
+	console.log("ouvrir")
+	await pince.Fermer()
+
+	//lidar.Init()
+	//lidar.Read(console.log)
+
 	camera.Init()
-	camera.Read(function (blocks) {
+	camera.Read(async function (blocks) {
 		console.log(blocks)
 	})
 
-	//while (true) {
-	//	await pince.Ouvrir();
-	//	await waitfor(3000);
-	//	await pince.Fermer();
-	//	await waitfor(3000);
-//
-	//}
 
-	//await pince.Ouvrir();
-	//console.log("pince.Fermer")
-	//await pince.Fermer();
-	//console.log("pince fermée")
+	console.log("started")
 
 	//let msg
 
